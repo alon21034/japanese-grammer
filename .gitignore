@@ -1,0 +1,13 @@
+# Local environment
+.env
+.venv/
+
+# Python cache
+__pycache__/
+*.pyc
+
+# Crawled/runtime data (do not commit)
+data/
+
+# Local logs
+*.log
