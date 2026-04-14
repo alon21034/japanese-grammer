@@ -225,6 +225,22 @@ def _format_sentence_message(session: dict[str, Any]) -> str:
     return _truncate("\n".join(lines), 4900)
 
 
+def _format_full_article_message(session: dict[str, Any]) -> str:
+    sentences_raw = session.get("sentences", [])
+    sentences = [str(line).strip() for line in sentences_raw if str(line).strip()] if isinstance(sentences_raw, list) else []
+    if not sentences:
+        return "目前沒有可顯示的整篇文章。"
+
+    lines = ["【整篇文章】", ""]
+    lines.extend(sentences)
+
+    url = str(session.get("url", "")).strip()
+    if url:
+        lines.extend(["", f"原文：{_truncate(url, 180)}"])
+
+    return _truncate("\n".join(lines), 4900)
+
+
 def _format_sentence_explanation_message(session: dict[str, Any]) -> str:
     sentences_raw = session.get("sentences", [])
     sentences = sentences_raw if isinstance(sentences_raw, list) else []
@@ -709,14 +725,24 @@ LOCAL_UI_HTML = """<!doctype html>
     <div class="card">
       <pre id="output">尚未產生內容</pre>
     </div>
+    <div class="card">
+      <h1>整篇文章</h1>
+      <p>獨立區塊，不會受上一句/下一句切換影響。</p>
+      <pre id="articleOutput">尚未載入整篇文章</pre>
+    </div>
   </div>
   <script>
     const output = document.getElementById("output");
+    const articleOutput = document.getElementById("articleOutput");
     const userIdInput = document.getElementById("userId");
     const furiInput = document.getElementById("furi");
 
     function setOutput(text) {
       output.textContent = text;
+    }
+
+    function setArticleOutput(text) {
+      articleOutput.textContent = text;
     }
 
     async function postJSON(url, body) {
@@ -739,6 +765,7 @@ LOCAL_UI_HTML = """<!doctype html>
         return;
       }
       setOutput(data.message || "無內容");
+      setArticleOutput(data.full_article || "尚未載入整篇文章");
     });
 
     document.getElementById("nextSentence").addEventListener("click", async () => {
@@ -823,6 +850,7 @@ def local_ui_lesson(req: LocalLessonRequest) -> JSONResponse:
             "user_id": user_id,
             "news_id": payload.get("news_id", ""),
             "message": _truncate(intro_message, 4900),
+            "full_article": _format_full_article_message(session),
             "position": {"index": 0, "total": len(payload.get("sentences", []))},
             "mode": mode,
         }
