@@ -70,6 +70,44 @@ def sha256_hex(text: str) -> str:
     return hashlib.sha256(text.encode("utf-8")).hexdigest()
 
 
+def build_rag_docs_payload(
+    data_dir: Path,
+    source_urls: list[str],
+    records: dict[str, dict[str, Any]],
+) -> dict[str, Any]:
+    items: list[dict[str, Any]] = []
+    for url in source_urls:
+        rec = records.get(url)
+        if not isinstance(rec, dict):
+            continue
+        rel_file = str(rec.get("file", "")).strip()
+        if not rel_file:
+            continue
+        article_path = data_dir / rel_file
+        article = load_json(article_path, default={})
+        if not article:
+            continue
+        title = str(article.get("title", "")).strip()
+        article_url = str(article.get("url", "")).strip()
+        sections_raw = article.get("sections", {})
+        sections = sections_raw if isinstance(sections_raw, dict) else {}
+        if not title or not article_url:
+            continue
+        items.append(
+            {
+                "title": title,
+                "url": article_url,
+                "level": str(article.get("level", "")).strip(),
+                "sections": sections,
+            }
+        )
+    return {
+        "generated_at": utc_now_iso(),
+        "total_items": len(items),
+        "items": items,
+    }
+
+
 def build_arg_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         description="Sync Japanese grammar articles from mainichi-nonbiri incrementally."
@@ -243,8 +281,15 @@ def sync(
         "total_articles_known": len(existing_articles),
         "articles": existing_articles,
     }
+    rag_docs_payload = build_rag_docs_payload(
+        data_dir=data_dir,
+        source_urls=urls,
+        records=existing_articles,
+    )
+    summary["rag_docs_items"] = int(rag_docs_payload.get("total_items", 0))
     dump_json(manifest_path, output_manifest)
     dump_json(index_path, {"generated_at": summary["finished_at"], "items": index_records})
+    dump_json(data_dir / "rag_docs.json", rag_docs_payload)
     dump_json(last_run_path, summary)
     return summary
 

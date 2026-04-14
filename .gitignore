@@ -11,3 +11,4 @@ data/
 
 # Local logs
 *.log
+.vercel

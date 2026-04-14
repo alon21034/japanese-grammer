@@ -7,6 +7,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
+from .blob_data import ensure_blob_json_cached
 from .zh_tw import to_zh_tw
 
 @dataclass(frozen=True)
@@ -51,6 +52,7 @@ def _load_json(path: Path, default: dict[str, Any]) -> dict[str, Any]:
 
 def load_nhk_index(data_dir: Path) -> list[dict[str, Any]]:
     index_path = data_dir / "nhk_easy" / "index.json"
+    ensure_blob_json_cached(index_path, "nhk_easy/index.json")
     payload = _load_json(index_path, default={"items": []})
     items = payload.get("items", [])
     if not isinstance(items, list):
@@ -73,6 +75,7 @@ def choose_next_news(index_items: list[dict[str, Any]], sent_news_ids: list[str]
 
 def load_nhk_article(data_dir: Path, news_id: str) -> NHKEasyArticle:
     path = data_dir / "nhk_easy" / "articles" / f"{news_id}.json"
+    ensure_blob_json_cached(path, f"nhk_easy/articles/{news_id}.json")
     payload = _load_json(path, default={})
     if not payload:
         raise RuntimeError(

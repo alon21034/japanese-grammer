@@ -2,3 +2,4 @@ beautifulsoup4==4.12.3
 fastapi==0.115.5
 requests==2.32.3
 uvicorn==0.32.0
+vercel==0.5.6

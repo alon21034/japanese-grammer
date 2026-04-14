@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import os
 import re
 from datetime import datetime, timezone
 from typing import Any
@@ -11,7 +12,7 @@ from fastapi.responses import HTMLResponse, JSONResponse
 from pydantic import BaseModel
 
 from .config import load_settings
-from .daily_job import build_line_digest_for_user, build_local_reading_payload
+from .daily_job import build_line_digest_for_user, build_local_reading_payload, run_daily_push
 from .line_api import LineClient
 from .nhk_lesson import format_question_message, normalize_short_answer, parse_user_answer
 from .codex_offline import build_detailed_explanations_offline, build_sentence_explanation_offline
@@ -44,6 +45,25 @@ EXPLAIN_CACHE_MAX_ITEMS = 200
 @app.get("/healthz")
 def healthz() -> dict[str, str]:
     return {"status": "ok"}
+
+
+def _cron_authorized(authorization: str | None) -> bool:
+    expected = os.getenv("CRON_SECRET", "").strip()
+    if not expected:
+        return True
+    return (authorization or "").strip() == f"Bearer {expected}"
+
+
+@app.get("/internal/cron/daily-push")
+@app.post("/internal/cron/daily-push")
+def cron_daily_push(authorization: str | None = Header(default=None)) -> JSONResponse:
+    if not _cron_authorized(authorization):
+        raise HTTPException(status_code=401, detail="Unauthorized cron request.")
+    try:
+        news_id = run_daily_push()
+    except Exception as exc:  # pragma: no cover
+        return JSONResponse({"ok": False, "error": str(exc)}, status_code=500)
+    return JSONResponse({"ok": True, "news_id": news_id})
 
 
 def _add_subscriber(user_id: str) -> bool:
@@ -780,12 +800,22 @@ def local_ui_lesson(req: LocalLessonRequest) -> JSONResponse:
         "sentence_started": False,
         "grammar_index": 0,
     }
+    refs = _grammar_refs(session)
+    if not refs:
+        session["sentence_started"] = True
+
     users = _load_local_ui_users()
     users[user_id] = session
     _save_local_ui_users(users)
 
-    intro = _format_grammar_message(session)
-    intro_message = intro + "\n\n按「詳細解釋」可查看目前這條文法的深入解析。進入句子模式後，會改為句子解釋。"
+    if refs:
+        intro = _format_grammar_message(session)
+        intro_message = intro + "\n\n按「詳細解釋」可查看目前這條文法的深入解析。進入句子模式後，會改為句子解釋。"
+        mode = "grammar"
+    else:
+        intro = _format_sentence_message(session)
+        intro_message = intro + "\n\n此篇未命中文法庫對照，已直接進入句子模式。"
+        mode = "sentence"
 
     return JSONResponse(
         {
@@ -794,6 +824,7 @@ def local_ui_lesson(req: LocalLessonRequest) -> JSONResponse:
             "news_id": payload.get("news_id", ""),
             "message": _truncate(intro_message, 4900),
             "position": {"index": 0, "total": len(payload.get("sentences", []))},
+            "mode": mode,
         }
     )
 
@@ -935,7 +966,17 @@ def local_ui_grammar(req: LocalStepRequest) -> JSONResponse:
     session = users.get(user_id)
     if not isinstance(session, dict):
         return JSONResponse({"ok": False, "error": "請先按「開始閱讀」。"}, status_code=400)
-    return JSONResponse({"ok": True, "user_id": user_id, "message": _format_grammar_message(session)})
+    refs = _grammar_refs(session)
+    if not refs:
+        return JSONResponse(
+            {
+                "ok": True,
+                "user_id": user_id,
+                "message": _format_sentence_message(session),
+                "mode": "sentence",
+            }
+        )
+    return JSONResponse({"ok": True, "user_id": user_id, "message": _format_grammar_message(session), "mode": "grammar"})
 
 
 @app.post("/local-ui/explain")

@@ -1,11 +1,15 @@
 from __future__ import annotations
 
+import json
 from datetime import datetime, timezone
+from pathlib import Path
 from typing import Any
 
+from .codex_offline import build_detailed_explanations_offline
 from .config import load_settings
 from .grammar_rag import retrieve_grammar_references
 from .line_api import LineClient
+from .nhk_easy import bootstrap_anonymous_session, fetch_article, fetch_top_news_list
 from .nhk_lesson import (
     build_fallback_lesson,
     choose_next_news,
@@ -22,6 +26,71 @@ from .storage import nhk_progress_store, quiz_state_store, subscribers_store
 
 def utc_now_iso() -> str:
     return datetime.now(timezone.utc).isoformat()
+
+
+def _dump_json(path: Path, data: dict[str, Any]) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(json.dumps(data, ensure_ascii=False, indent=2), encoding="utf-8")
+
+
+def _bootstrap_nhk_seed_data() -> None:
+    settings = load_settings()
+    base = settings.data_dir / "nhk_easy"
+    index_path = base / "index.json"
+    articles_dir = base / "articles"
+
+    session, token = bootstrap_anonymous_session()
+    top_list = fetch_top_news_list(session, token)
+    first = next((item for item in top_list if str(item.get("news_id", "")).strip()), None)
+    if not isinstance(first, dict):
+        raise RuntimeError("NHK top-list is empty.")
+
+    news_id = str(first.get("news_id", "")).strip()
+    article = fetch_article(session, token, news_id)
+    grammar_references = retrieve_grammar_references(
+        settings.data_dir,
+        article_title=article.title,
+        article_paragraphs=article.paragraphs_plain,
+        top_k=3,
+    )
+    offline_detailed_explanations = build_detailed_explanations_offline(
+        article_title=article.title,
+        article_paragraphs=article.paragraphs_plain,
+        grammar_references=grammar_references,
+    )
+
+    article_path = articles_dir / f"{news_id}.json"
+    _dump_json(
+        article_path,
+        {
+            "news_id": news_id,
+            "title": article.title,
+            "url": article.url,
+            "published_at": str(first.get("news_prearranged_time", "")).strip() or None,
+            "regular_news_url": article.regular_news_url,
+            "paragraphs_plain": article.paragraphs_plain,
+            "paragraphs_with_furigana": article.paragraphs_with_furigana,
+            "grammar_references": grammar_references,
+            "offline_detailed_explanations": offline_detailed_explanations,
+            "body_html": article.body_html,
+            "top_list_item": first,
+            "scraped_at": utc_now_iso(),
+        },
+    )
+    _dump_json(
+        index_path,
+        {
+            "generated_at": utc_now_iso(),
+            "items": [
+                {
+                    "news_id": news_id,
+                    "title": article.title,
+                    "url": article.url,
+                    "file": f"articles/{news_id}.json",
+                }
+            ],
+        },
+    )
 
 
 def _subscriber_ids() -> list[str]:
@@ -70,7 +139,10 @@ def _build_lesson_components():
     settings = load_settings()
     index_items = load_nhk_index(settings.data_dir)
     if not index_items:
-        raise RuntimeError("No NHK Easy articles found. Run scripts/sync_nhk_easy.py first.")
+        _bootstrap_nhk_seed_data()
+        index_items = load_nhk_index(settings.data_dir)
+    if not index_items:
+        raise RuntimeError("No NHK Easy articles found.")
 
     news_id = choose_next_news(index_items, _sent_news_ids())
     article = load_nhk_article(settings.data_dir, news_id)

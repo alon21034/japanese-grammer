@@ -6,6 +6,7 @@ from dataclasses import dataclass
 from functools import lru_cache
 from pathlib import Path
 
+from .blob_data import ensure_blob_json_cached
 from .zh_tw import to_zh_tw
 
 _STOP_WORDS = {
@@ -78,8 +79,8 @@ def retrieve_grammar_references(
     article_paragraphs: list[str],
     top_k: int = 3,
 ) -> list[dict[str, str]]:
-    articles_dir = data_dir / "crawl" / "articles"
-    docs = _load_docs_cached(str(articles_dir.resolve()))
+    crawl_dir = (data_dir / "crawl").resolve()
+    docs = _load_docs_cached(str(crawl_dir))
     if not docs:
         return []
 
@@ -151,12 +152,20 @@ def retrieve_grammar_references(
 
 
 @lru_cache(maxsize=2)
-def _load_docs_cached(articles_dir_str: str) -> tuple[GrammarDoc, ...]:
-    articles_dir = Path(articles_dir_str)
+def _load_docs_cached(crawl_dir_str: str) -> tuple[GrammarDoc, ...]:
+    crawl_dir = Path(crawl_dir_str)
+    rag_docs_path = crawl_dir / "rag_docs.json"
+    ensure_blob_json_cached(rag_docs_path, "crawl/rag_docs.json")
+
+    docs = _load_docs_from_rag_docs(rag_docs_path)
+    if docs:
+        return docs
+
+    articles_dir = crawl_dir / "articles"
     if not articles_dir.exists():
         return tuple()
 
-    docs: list[GrammarDoc] = []
+    legacy_docs: list[GrammarDoc] = []
     for path in sorted(articles_dir.glob("*.json")):
         try:
             payload = json.loads(path.read_text(encoding="utf-8"))
@@ -164,58 +173,88 @@ def _load_docs_cached(articles_dir_str: str) -> tuple[GrammarDoc, ...]:
             continue
         if not isinstance(payload, dict):
             continue
+        doc = _grammar_doc_from_payload(payload)
+        if doc is not None:
+            legacy_docs.append(doc)
+    return tuple(legacy_docs)
 
-        title = str(payload.get("title", "")).strip()
-        url = str(payload.get("url", "")).strip()
-        level = str(payload.get("level", "")).strip() or None
-        sections = payload.get("sections", {})
-        if not isinstance(sections, dict):
-            sections = {}
 
-        meanings = _as_lines(sections.get("意味"))
-        explanations = _as_lines(sections.get("解説"))
-        examples = _as_lines(sections.get("例文"))
-        connections = _as_lines(sections.get("接続"))
+def _load_docs_from_rag_docs(rag_docs_path: Path) -> tuple[GrammarDoc, ...]:
+    if not rag_docs_path.exists():
+        return tuple()
 
-        meaning = " / ".join(meanings[:2])
-        explanation = " ".join(explanations[:1])
-        example = _extract_example(examples)
-        reading_pairs = _extract_reading_pairs(title, sections)
-        example_kanji = tuple(_select_example_kanji_pairs(example, reading_pairs))
+    try:
+        payload = json.loads(rag_docs_path.read_text(encoding="utf-8"))
+    except Exception:
+        return tuple()
+    if not isinstance(payload, dict):
+        return tuple()
 
-        patterns = _extract_patterns_from_title(title)
-        search_text = "\n".join(
-            [
-                title,
-                " ".join(patterns),
-                " ".join(connections[:1]),
-                meaning,
-                explanation,
-                " ".join(examples[:1]),
-            ]
-        )
-        normalized = _normalize(search_text)
-        tokens = frozenset(_tokenize(normalized))
-        trigrams = frozenset(_char_trigrams(normalized))
-        if not tokens and not trigrams:
+    items = payload.get("items", [])
+    if not isinstance(items, list):
+        return tuple()
+
+    docs: list[GrammarDoc] = []
+    for item in items:
+        if not isinstance(item, dict):
             continue
-
-        docs.append(
-            GrammarDoc(
-                title=title,
-                url=url,
-                level=level,
-                patterns=tuple(patterns),
-                meaning=meaning,
-                explanation=explanation,
-                example=example,
-                example_kanji=example_kanji,
-                tokens=tokens,
-                trigrams=trigrams,
-            )
-        )
-
+        doc = _grammar_doc_from_payload(item)
+        if doc is not None:
+            docs.append(doc)
     return tuple(docs)
+
+
+def _grammar_doc_from_payload(payload: dict[str, object]) -> GrammarDoc | None:
+    title = str(payload.get("title", "")).strip()
+    url = str(payload.get("url", "")).strip()
+    if not title or not url:
+        return None
+
+    level = str(payload.get("level", "")).strip() or None
+    sections = payload.get("sections", {})
+    if not isinstance(sections, dict):
+        sections = {}
+
+    meanings = _as_lines(sections.get("意味"))
+    explanations = _as_lines(sections.get("解説"))
+    examples = _as_lines(sections.get("例文"))
+    connections = _as_lines(sections.get("接続"))
+
+    meaning = " / ".join(meanings[:2])
+    explanation = " ".join(explanations[:1])
+    example = _extract_example(examples)
+    reading_pairs = _extract_reading_pairs(title, sections)
+    example_kanji = tuple(_select_example_kanji_pairs(example, reading_pairs))
+
+    patterns = _extract_patterns_from_title(title)
+    search_text = "\n".join(
+        [
+            title,
+            " ".join(patterns),
+            " ".join(connections[:1]),
+            meaning,
+            explanation,
+            " ".join(examples[:1]),
+        ]
+    )
+    normalized = _normalize(search_text)
+    tokens = frozenset(_tokenize(normalized))
+    trigrams = frozenset(_char_trigrams(normalized))
+    if not tokens and not trigrams:
+        return None
+
+    return GrammarDoc(
+        title=title,
+        url=url,
+        level=level,
+        patterns=tuple(patterns),
+        meaning=meaning,
+        explanation=explanation,
+        example=example,
+        example_kanji=example_kanji,
+        tokens=tokens,
+        trigrams=trigrams,
+    )
 
 
 def _as_lines(raw: object) -> list[str]:

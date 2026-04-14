@@ -36,6 +36,8 @@ class Settings:
     local_test_mode: bool
     local_test_user_id: str
     data_dir: Path
+    blob_public_base_url: str | None
+    blob_data_prefix: str
 
 
 def load_settings() -> Settings:
@@ -49,9 +51,17 @@ def load_settings() -> Settings:
     openai_model = os.getenv("OPENAI_MODEL", "gpt-4.1-mini").strip() or "gpt-4.1-mini"
     local_test_mode = _env_bool("LOCAL_TEST_MODE", default=False)
     local_test_user_id = os.getenv("LOCAL_TEST_USER_ID", "").strip() or "Ulocaltest"
+    blob_public_base_url = os.getenv("BLOB_PUBLIC_BASE_URL", "").strip() or None
+    blob_data_prefix = os.getenv("BLOB_DATA_PREFIX", "").strip().strip("/")
 
+    is_vercel = bool(os.getenv("VERCEL", "").strip())
     data_dir_raw = os.getenv("DATA_DIR", "./data").strip() or "./data"
-    data_dir = (root / data_dir_raw).resolve()
+    if is_vercel and data_dir_raw == "./data":
+        data_dir = Path("/tmp/japanese-grammer-data")
+    else:
+        raw_path = Path(data_dir_raw)
+        data_dir = raw_path if raw_path.is_absolute() else (root / raw_path)
+    data_dir = data_dir.resolve()
     data_dir.mkdir(parents=True, exist_ok=True)
 
     return Settings(
@@ -63,4 +73,6 @@ def load_settings() -> Settings:
         local_test_mode=local_test_mode,
         local_test_user_id=local_test_user_id,
         data_dir=data_dir,
+        blob_public_base_url=blob_public_base_url,
+        blob_data_prefix=blob_data_prefix,
     )
