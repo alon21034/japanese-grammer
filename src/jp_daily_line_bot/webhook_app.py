@@ -723,12 +723,13 @@ LOCAL_UI_HTML = """<!doctype html>
       </div>
     </div>
     <div class="card">
-      <pre id="output">尚未產生內容</pre>
-    </div>
-    <div class="card">
       <h1>整篇文章</h1>
       <p>獨立區塊，不會受上一句/下一句切換影響。</p>
       <pre id="articleOutput">尚未載入整篇文章</pre>
+    </div>
+    <div class="card">
+      <h1>講解</h1>
+      <pre id="output">尚未產生內容</pre>
     </div>
   </div>
   <script>
