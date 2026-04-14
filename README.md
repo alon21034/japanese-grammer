@@ -118,7 +118,11 @@ BLOB_DATA_PREFIX=prod
 ## 3.2) GitHub CI/CD（Actions）
 本專案已提供：
 - `.github/workflows/ci.yml`：PR / push 時執行 Python 安裝、語法檢查與 import smoke test
-- `.github/workflows/deploy-vercel.yml`：`main` push 自動部署到 Vercel Production
+- `.github/workflows/deploy-vercel.yml`：手動觸發部署到 Vercel Production（`workflow_dispatch`）
+
+說明：
+- `main` 分支推送後，Vercel 會透過 Git Integration 自動部署（建議主流程）。
+- GitHub Actions 的 Deploy workflow 保留為「手動備援」。
 
 請在 GitHub Repo -> Settings -> Secrets and variables -> Actions 建立：
 - `VERCEL_TOKEN`

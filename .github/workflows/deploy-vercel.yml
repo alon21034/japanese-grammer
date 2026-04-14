@@ -1,9 +1,6 @@
 name: Deploy Vercel
 
 on:
-  push:
-    branches:
-      - main
   workflow_dispatch:
 
 concurrency:
@@ -14,11 +11,23 @@ jobs:
   deploy:
     runs-on: ubuntu-latest
     timeout-minutes: 20
-    if: ${{ secrets.VERCEL_TOKEN != '' && secrets.VERCEL_ORG_ID != '' && secrets.VERCEL_PROJECT_ID != '' }}
 
     steps:
       - name: Checkout
         uses: actions/checkout@v4
+
+      - name: Validate required secrets
+        shell: bash
+        run: |
+          missing=()
+          [[ -z "${{ secrets.VERCEL_TOKEN }}" ]] && missing+=("VERCEL_TOKEN")
+          [[ -z "${{ secrets.VERCEL_ORG_ID }}" ]] && missing+=("VERCEL_ORG_ID")
+          [[ -z "${{ secrets.VERCEL_PROJECT_ID }}" ]] && missing+=("VERCEL_PROJECT_ID")
+          if (( ${#missing[@]} > 0 )); then
+            echo "::error::Missing GitHub Actions secrets: ${missing[*]}"
+            echo "::error::Please set them in Repo Settings > Secrets and variables > Actions."
+            exit 1
+          fi
 
       - name: Setup Node
         uses: actions/setup-node@v4
