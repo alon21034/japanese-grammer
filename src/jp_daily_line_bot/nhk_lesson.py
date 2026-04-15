@@ -20,6 +20,7 @@ class NHKEasyArticle:
     paragraphs_with_furigana: list[str]
     grammar_references: list[dict[str, str]] = field(default_factory=list)
     offline_detailed_explanations: list[dict[str, str]] = field(default_factory=list)
+    unified_analysis: dict[str, Any] = field(default_factory=dict)
 
 
 @dataclass(frozen=True)
@@ -97,6 +98,8 @@ def load_nhk_article(data_dir: Path, news_id: str) -> NHKEasyArticle:
     offline_details_raw = payload.get("offline_detailed_explanations") or []
     offline_details = offline_details_raw if isinstance(offline_details_raw, list) else []
     offline_details_clean = [item for item in offline_details if isinstance(item, dict)]
+    unified_raw = payload.get("unified_analysis", {})
+    unified_analysis = unified_raw if isinstance(unified_raw, dict) else {}
     if not clean_plain:
         raise RuntimeError(f"NHK article {news_id} has no usable paragraphs.")
 
@@ -109,6 +112,7 @@ def load_nhk_article(data_dir: Path, news_id: str) -> NHKEasyArticle:
         paragraphs_with_furigana=clean_furi,
         grammar_references=grammar_refs_clean,
         offline_detailed_explanations=offline_details_clean,
+        unified_analysis=unified_analysis,
     )
 
 

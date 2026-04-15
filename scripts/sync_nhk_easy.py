@@ -18,6 +18,7 @@ if str(SRC) not in sys.path:
 from jp_daily_line_bot.nhk_easy import EASY_INDEX_URL, bootstrap_anonymous_session, fetch_article, fetch_top_news_list
 from jp_daily_line_bot.grammar_rag import retrieve_grammar_references
 from jp_daily_line_bot.codex_offline import build_detailed_explanations_offline
+from jp_daily_line_bot.unified_analysis import build_unified_analysis
 
 
 def utc_now_iso() -> str:
@@ -170,6 +171,13 @@ def sync(
                 article_paragraphs=article.paragraphs_plain,
                 grammar_references=grammar_references,
             )
+            unified_analysis = build_unified_analysis(
+                news_id=news_id,
+                published_at=published_at,
+                url=article.url,
+                article_sentences=article.paragraphs_plain,
+                grammar_candidates=grammar_references,
+            )
 
             payload = canonical_payload(
                 title=article.title,
@@ -200,6 +208,7 @@ def sync(
                     "paragraphs_with_furigana": article.paragraphs_with_furigana,
                     "grammar_references": grammar_references,
                     "offline_detailed_explanations": offline_detailed_explanations,
+                    "unified_analysis": unified_analysis,
                     "body_html": article.body_html,
                     "top_list_item": item,
                     "scraped_at": now,

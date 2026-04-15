@@ -22,6 +22,7 @@ from .nhk_lesson import (
     pending_quiz_payload,
 )
 from .storage import nhk_progress_store, quiz_state_store, subscribers_store
+from .unified_analysis import build_unified_analysis
 
 
 def utc_now_iso() -> str:
@@ -58,6 +59,13 @@ def _bootstrap_nhk_seed_data() -> None:
         article_paragraphs=article.paragraphs_plain,
         grammar_references=grammar_references,
     )
+    unified_analysis = build_unified_analysis(
+        news_id=news_id,
+        published_at=str(first.get("news_prearranged_time", "")).strip() or None,
+        url=article.url,
+        article_sentences=article.paragraphs_plain,
+        grammar_candidates=grammar_references,
+    )
 
     article_path = articles_dir / f"{news_id}.json"
     _dump_json(
@@ -72,6 +80,7 @@ def _bootstrap_nhk_seed_data() -> None:
             "paragraphs_with_furigana": article.paragraphs_with_furigana,
             "grammar_references": grammar_references,
             "offline_detailed_explanations": offline_detailed_explanations,
+            "unified_analysis": unified_analysis,
             "body_html": article.body_html,
             "top_list_item": first,
             "scraped_at": utc_now_iso(),
@@ -250,6 +259,15 @@ def build_line_digest_for_user(user_id: str, include_furigana: bool = False) -> 
 def build_local_reading_payload(include_furigana: bool = False) -> dict[str, Any]:
     news_id, article, lesson, grammar_references = _build_lesson_components()
     sentences = article.paragraphs_plain
+    unified_analysis = article.unified_analysis if isinstance(article.unified_analysis, dict) else {}
+    if not unified_analysis:
+        unified_analysis = build_unified_analysis(
+            news_id=news_id,
+            published_at=article.published_at,
+            url=article.url,
+            article_sentences=sentences,
+            grammar_candidates=grammar_references[:3],
+        )
     return {
         "news_id": news_id,
         "title": article.title,
@@ -260,6 +278,7 @@ def build_local_reading_payload(include_furigana: bool = False) -> dict[str, Any
         "grammar_points": lesson.grammar_points[:3],
         "grammar_references": grammar_references[:3],
         "offline_detailed_explanations": article.offline_detailed_explanations[:3],
+        "unified_analysis": unified_analysis,
     }
 
 

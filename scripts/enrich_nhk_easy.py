@@ -15,6 +15,7 @@ if str(SRC) not in sys.path:
 
 from jp_daily_line_bot.codex_offline import build_detailed_explanations_offline
 from jp_daily_line_bot.grammar_rag import retrieve_grammar_references
+from jp_daily_line_bot.unified_analysis import build_unified_analysis
 
 
 def utc_now_iso() -> str:
@@ -78,6 +79,15 @@ def _has_non_empty_list_field(payload: dict[str, Any], field: str) -> bool:
     return any(isinstance(item, dict) for item in raw)
 
 
+def _has_unified_analysis(payload: dict[str, Any]) -> bool:
+    raw = payload.get("unified_analysis")
+    if not isinstance(raw, dict):
+        return False
+    points = raw.get("grammar_points", [])
+    sentences = raw.get("sentence_analysis", [])
+    return isinstance(points, list) and isinstance(sentences, list)
+
+
 def enrich(
     data_dir: Path,
     *,
@@ -116,7 +126,8 @@ def enrich(
 
         has_refs = _has_non_empty_list_field(payload, "grammar_references")
         has_details = _has_non_empty_list_field(payload, "offline_detailed_explanations")
-        if missing_only and has_refs and has_details:
+        has_unified = _has_unified_analysis(payload)
+        if missing_only and has_refs and has_details and has_unified:
             summary["skipped"] += 1
             continue
 
@@ -139,6 +150,13 @@ def enrich(
                 article_paragraphs=paragraphs_plain,
                 grammar_references=refs,
             )
+            unified = build_unified_analysis(
+                news_id=str(payload.get("news_id", "")).strip(),
+                published_at=str(payload.get("published_at", "")).strip() or None,
+                url=str(payload.get("url", "")).strip(),
+                article_sentences=paragraphs_plain,
+                grammar_candidates=refs,
+            )
         except Exception as exc:  # pragma: no cover
             summary["failed"] += 1
             summary["failed_files"].append({"file": str(path), "error": str(exc)})
@@ -148,7 +166,8 @@ def enrich(
 
         prev_refs = payload.get("grammar_references")
         prev_details = payload.get("offline_detailed_explanations")
-        changed = prev_refs != refs or prev_details != details
+        prev_unified = payload.get("unified_analysis")
+        changed = prev_refs != refs or prev_details != details or prev_unified != unified
         if not changed:
             summary["unchanged"] += 1
             if verbose:
@@ -157,6 +176,7 @@ def enrich(
 
         payload["grammar_references"] = refs
         payload["offline_detailed_explanations"] = details
+        payload["unified_analysis"] = unified
         payload["enriched_at"] = utc_now_iso()
         path.write_text(json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8")
 

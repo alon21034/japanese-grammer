@@ -129,7 +129,52 @@ def _normalize_refs_for_cache(refs: list[dict[str, Any]]) -> list[dict[str, str]
     return out
 
 
+def _unified_analysis(session: dict[str, Any]) -> dict[str, Any]:
+    raw = session.get("unified_analysis", {})
+    return raw if isinstance(raw, dict) else {}
+
+
+def _unified_grammar_points(session: dict[str, Any]) -> list[dict[str, Any]]:
+    analysis = _unified_analysis(session)
+    raw = analysis.get("grammar_points", [])
+    if not isinstance(raw, list):
+        return []
+    out: list[dict[str, Any]] = []
+    for item in raw[:3]:
+        if not isinstance(item, dict):
+            continue
+        pattern = str(item.get("pattern", "")).strip()
+        if not pattern:
+            continue
+        out.append(item)
+    return out
+
+
 def _grammar_refs(session: dict[str, Any]) -> list[dict[str, Any]]:
+    analysis = _unified_analysis(session)
+    if isinstance(analysis, dict) and "grammar_points" in analysis:
+        unified_points = _unified_grammar_points(session)
+        out: list[dict[str, Any]] = []
+        for point in unified_points:
+            out.append(
+                {
+                    "pattern": str(point.get("pattern", "")).strip(),
+                    "level": str(point.get("level", "")).strip(),
+                    "meaning": str(point.get("meaning", "")).strip(),
+                    "explanation": str(point.get("usage_zh", "")).strip(),
+                    "example": str(point.get("reference_example_ja", "")).strip(),
+                    "example_kanji": str(point.get("reference_example_kanji", "")).strip(),
+                    "url": str(point.get("source_url", "")).strip(),
+                    "from_text": str(point.get("from_text", "")).strip(),
+                    "extra_example_ja": str(point.get("extra_example_ja", "")).strip(),
+                    "extra_example_zh": str(point.get("extra_example_zh", "")).strip(),
+                    "detailed_explanation_zh": str(point.get("detailed_explanation_zh", "")).strip(),
+                    "example_breakdown_zh": str(point.get("example_breakdown_zh", "")).strip(),
+                    "common_confusion_zh": str(point.get("common_confusion_zh", "")).strip(),
+                }
+            )
+        return out
+
     refs_raw = session.get("grammar_references", [])
     refs = refs_raw if isinstance(refs_raw, list) else []
     out: list[dict[str, Any]] = []
@@ -250,6 +295,64 @@ def _format_sentence_explanation_message(session: dict[str, Any]) -> str:
     index = int(session.get("index", 0))
     index = max(0, min(index, len(sentences) - 1))
     sentence = str(sentences[index]).strip()
+
+    analysis = _unified_analysis(session)
+    sentence_analysis_raw = analysis.get("sentence_analysis", [])
+    sentence_analysis = sentence_analysis_raw if isinstance(sentence_analysis_raw, list) else []
+    current_sentence_analysis = (
+        sentence_analysis[index]
+        if index < len(sentence_analysis) and isinstance(sentence_analysis[index], dict)
+        else {}
+    )
+    if current_sentence_analysis:
+        lines: list[str] = ["【句子解釋】", f"句子 {index + 1}/{len(sentences)}：{_truncate(sentence, 220)}"]
+
+        suggested = _truncate(str(current_sentence_analysis.get("suggested_natural_ja", "")).strip(), 220)
+        if suggested:
+            lines.append(f"較自然寫法：{suggested}")
+
+        points_raw = current_sentence_analysis.get("key_points", [])
+        points = points_raw if isinstance(points_raw, list) else []
+        if points:
+            lines.append("")
+            lines.append("【句型重點】")
+            for i, point in enumerate(points[:4], start=1):
+                lines.append(f"{i}. {_truncate(to_zh_tw(str(point).strip()), 120)}")
+
+        matched_raw = current_sentence_analysis.get("matched_grammar_patterns", [])
+        matched_patterns = [str(p).strip() for p in matched_raw if str(p).strip()] if isinstance(matched_raw, list) else []
+        if matched_patterns:
+            refs = _grammar_refs(session)
+            lines.append("")
+            lines.append("【文法庫對照】")
+            for pattern in matched_patterns[:2]:
+                meaning = ""
+                for ref in refs:
+                    ref_pattern = str(ref.get("pattern", "")).strip() or str(ref.get("title", "")).strip()
+                    if ref_pattern == pattern:
+                        meaning = _truncate(to_zh_tw(str(ref.get("meaning", "")).strip()), 80)
+                        break
+                line = f"- {pattern}"
+                if meaning:
+                    line += f"：{meaning}"
+                lines.append(_truncate(line, 160))
+
+        translation = _truncate(to_zh_tw(str(current_sentence_analysis.get("translation_zh", "")).strip()), 200)
+        if translation:
+            lines.append("")
+            lines.append(f"【中文理解】{translation}")
+
+        furi_lines_raw = session.get("sentences_furigana", [])
+        furi_lines = furi_lines_raw if isinstance(furi_lines_raw, list) else []
+        furi_line = str(furi_lines[index]).strip() if index < len(furi_lines) else ""
+        kanji_pairs = _extract_inline_furigana_pairs(furi_line)
+        if kanji_pairs:
+            lines.append("")
+            lines.append("【漢字標註】")
+            for k, r in kanji_pairs[:10]:
+                lines.append(f"{k}({r})")
+        return _truncate("\n".join(lines), 4900)
+
     normalized_sentence = re.sub(r"[ 　]", "", sentence)
 
     refs = _grammar_refs(session)
@@ -394,6 +497,9 @@ def _format_grammar_message(session: dict[str, Any]) -> str:
     explanation = _truncate(to_zh_tw(str(ref.get("explanation", "")).strip()), 140)
     example = _truncate(str(ref.get("example", "")).strip(), 120)
     example_kanji = _truncate(str(ref.get("example_kanji", "")).strip(), 140)
+    from_text = _truncate(str(ref.get("from_text", "")).strip(), 140)
+    extra_example_ja = _truncate(str(ref.get("extra_example_ja", "")).strip(), 120)
+    extra_example_zh = _truncate(to_zh_tw(str(ref.get("extra_example_zh", "")).strip()), 120)
     url = _truncate(str(ref.get("url", "")).strip(), 120)
 
     lines: list[str] = [f"【文法庫對照 {idx + 1}/{len(refs)}】"]
@@ -403,10 +509,16 @@ def _format_grammar_message(session: dict[str, Any]) -> str:
         lines.append(f"- 意思：{meaning}")
     if explanation:
         lines.append(f"- 解釋：{explanation}")
+    if from_text:
+        lines.append(f"- 文章例句：{from_text}")
     if example:
         lines.append(f"- 例句（文法庫）：{example}")
     if example_kanji:
         lines.append(f"- 漢字標註：{example_kanji}")
+    if extra_example_ja:
+        lines.append(f"- 補充例句：{extra_example_ja}")
+    if extra_example_zh:
+        lines.append(f"- 補充例句中文：{extra_example_zh}")
     if url:
         lines.append(f"- 來源：{url}")
     lines.append("")
@@ -444,28 +556,50 @@ def _format_detailed_explanation_message(
         lines.append(f"註記：{_truncate(to_zh_tw(warning), 180)}")
         lines.append("")
 
-    pattern = _truncate(str(ref.get("pattern", "")).strip() or str(ref.get("title", "")).strip(), 50)
+    raw_pattern = str(ref.get("pattern", "")).strip() or str(ref.get("title", "")).strip()
+    pattern = _truncate(raw_pattern, 50)
     meaning = _truncate(to_zh_tw(str(ref.get("meaning", "")).strip()), 80)
     explanation = _truncate(to_zh_tw(str(ref.get("explanation", "")).strip()), 140)
     example = _truncate(str(ref.get("example", "")).strip(), 120)
     example_kanji = _truncate(str(ref.get("example_kanji", "")).strip(), 140)
+    from_text = _truncate(str(ref.get("from_text", "")).strip(), 140)
+    extra_example_ja = _truncate(str(ref.get("extra_example_ja", "")).strip(), 120)
+    extra_example_zh = _truncate(to_zh_tw(str(ref.get("extra_example_zh", "")).strip()), 120)
     url = _truncate(str(ref.get("url", "")).strip(), 120)
 
     lines.append(f"{idx + 1}. {pattern}")
     if meaning:
         lines.append(f"- 意思：{meaning}")
+    if from_text:
+        lines.append(f"- 文章例句：{from_text}")
     if example:
         lines.append(f"- 例句（文法庫）：{example}")
     if example_kanji:
         lines.append(f"- 漢字標註：{example_kanji}")
+    if extra_example_ja:
+        lines.append(f"- 補充例句：{extra_example_ja}")
+    if extra_example_zh:
+        lines.append(f"- 補充例句中文：{extra_example_zh}")
 
-    detail = None
+    detail: dict[str, str] | None = None
     for candidate in details_norm:
-        if candidate.get("pattern") == pattern:
+        if candidate.get("pattern") == raw_pattern:
             detail = candidate
             break
     if detail is None and details_norm:
         detail = details_norm[0]
+
+    if detail is None:
+        detailed_ref = str(ref.get("detailed_explanation_zh", "")).strip()
+        breakdown_ref = str(ref.get("example_breakdown_zh", "")).strip()
+        confusion_ref = str(ref.get("common_confusion_zh", "")).strip()
+        if detailed_ref or breakdown_ref or confusion_ref:
+            detail = {
+                "pattern": raw_pattern,
+                "detailed_explanation_zh": detailed_ref,
+                "example_breakdown_zh": breakdown_ref,
+                "common_confusion_zh": confusion_ref,
+            }
 
     if detail:
         detailed = _truncate(to_zh_tw(detail.get("detailed_explanation_zh", "")), 260)
@@ -1034,6 +1168,18 @@ def local_ui_explain(req: LocalStepRequest) -> JSONResponse:
         return JSONResponse({"ok": False, "error": "目前沒有可解釋的文法庫對照。"}, status_code=400)
     current_idx = _current_grammar_index(session, refs)
     current_ref = refs[current_idx]
+
+    if _unified_grammar_points(session):
+        return JSONResponse(
+            {
+                "ok": True,
+                "user_id": user_id,
+                "message": _format_detailed_explanation_message(session, [], warning=""),
+                "warning": "",
+                "cached": True,
+                "mode": "grammar",
+            }
+        )
 
     refs_for_cache = _normalize_refs_for_cache([current_ref])
     cache_key = _build_explain_cache_key(refs_for_cache)
